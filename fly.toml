@@ -1,4 +1,4 @@
-app = "chatmock"
+app = "chatmock-prod"
 primary_region = "ord"
 
 [build]
@@ -41,10 +41,13 @@ path = "/health"
 source = "chatmock_data"
 destination = "/app/data"
 
-[[checks]]
-type = "http"
-grace_period = "30s"
-interval = "30s"
-method = "GET"
-path = "/health/tokens"
-timeout = "5s"
+# Temporarily disabled until tokens are injected
+# [[checks]]
+# name = "token_health"
+# type = "http"
+# grace_period = "30s"
+# interval = "30s"
+# method = "GET"
+# path = "/health/tokens"
+# timeout = "5s"
+# port = 8080
