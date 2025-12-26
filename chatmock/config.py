@@ -46,3 +46,29 @@ def read_gpt5_codex_instructions(fallback: str) -> str:
 
 BASE_INSTRUCTIONS = read_base_instructions()
 GPT5_CODEX_INSTRUCTIONS = read_gpt5_codex_instructions(BASE_INSTRUCTIONS)
+
+
+def load_content_type_prompts() -> dict[str, str]:
+    """
+    Load specialized prompts for different content types.
+    Used for video generation, storytelling, screenplay, etc.
+    """
+    content_types = {
+        'story': 'prompt_story.md',
+        'script': 'prompt_script.md',
+        'screenplay': 'prompt_script.md',
+        'dialogue': 'prompt_dialogue.md',
+        'storyboard': 'prompt_storyboard.md',
+        'image': 'prompt_image.md',
+    }
+
+    prompts = {}
+    for content_type, filename in content_types.items():
+        content = _read_prompt_text(filename)
+        if content is not None and isinstance(content, str) and content.strip():
+            prompts[content_type] = content
+
+    return prompts
+
+
+CONTENT_TYPE_PROMPTS = load_content_type_prompts()

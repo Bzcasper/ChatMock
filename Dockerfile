@@ -1,7 +1,8 @@
-FROM python:3.11-slim
+FROM python:3.13-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    CHATGPT_LOCAL_HOME=/app/data
 
 WORKDIR /app
 
@@ -10,12 +11,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . /app
 
-RUN mkdir -p /data
+RUN mkdir -p /app/data
 
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-EXPOSE 8000 1455
+EXPOSE 8000
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["serve"]

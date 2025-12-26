@@ -57,12 +57,37 @@ def _wrap_stream_logging(label: str, iterator, enabled: bool):
     return _gen()
 
 
-def _instructions_for_model(model: str) -> str:
+def _get_specialized_instructions(content_type: str | None) -> str | None:
+    """Get specialized instructions for content-type specific requests."""
+    if not isinstance(content_type, str) or not content_type.strip():
+        return None
+
+    content_type = content_type.strip().lower()
+    prompts = current_app.config.get("CONTENT_TYPE_PROMPTS", {})
+    return prompts.get(content_type)
+
+
+def _merge_instructions(base: str, specialized: str | None) -> str:
+    """Merge base instructions with specialized content-type instructions."""
+    if not specialized:
+        return base
+
+    return f"{base}\n\n## SPECIALIZED INSTRUCTIONS FOR {specialized.split()[0].upper()}:\n\n{specialized}"
+
+
+def _instructions_for_model(model: str, content_type: str | None = None) -> str:
     base = current_app.config.get("BASE_INSTRUCTIONS", BASE_INSTRUCTIONS)
     if model.startswith("gpt-5-codex") or model.startswith("gpt-5.1-codex") or model.startswith("gpt-5.2-codex"):
         codex = current_app.config.get("GPT5_CODEX_INSTRUCTIONS") or GPT5_CODEX_INSTRUCTIONS
         if isinstance(codex, str) and codex.strip():
-            return codex
+            base = codex
+
+    # Apply specialized instructions if content-type provided
+    if content_type:
+        specialized = _get_specialized_instructions(content_type)
+        if specialized:
+            base = _merge_instructions(base, specialized)
+
     return base
 
 
@@ -74,6 +99,7 @@ def chat_completions() -> Response:
     reasoning_summary = current_app.config.get("REASONING_SUMMARY", "auto")
     reasoning_compat = current_app.config.get("REASONING_COMPAT", "think-tags")
     debug_model = current_app.config.get("DEBUG_MODEL")
+    content_type = request.headers.get("X-Prompt-Type", "").strip().lower() or None
 
     raw = request.get_data(cache=True, as_text=True) or ""
     if verbose:
@@ -181,7 +207,7 @@ def chat_completions() -> Response:
     upstream, error_resp = start_upstream_request(
         model,
         input_items,
-        instructions=_instructions_for_model(model),
+        instructions=_instructions_for_model(model, content_type),
         tools=tools_responses,
         tool_choice=tool_choice,
         parallel_tool_calls=parallel_tool_calls,
@@ -415,7 +441,7 @@ def completions() -> Response:
     upstream, error_resp = start_upstream_request(
         model,
         input_items,
-        instructions=_instructions_for_model(model),
+        instructions=_instructions_for_model(model, content_type),
         reasoning_param=reasoning_param,
     )
     if error_resp is not None:

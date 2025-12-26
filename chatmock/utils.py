@@ -7,11 +7,15 @@ import json
 import os
 import secrets
 import sys
+import threading
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
 from .config import CLIENT_ID_DEFAULT, OAUTH_TOKEN_URL
+
+_TOKEN_REFRESH_LOCK = threading.Lock()
 
 
 def eprint(*args, **kwargs) -> None:
@@ -234,28 +238,37 @@ def load_chatgpt_tokens(ensure_fresh: bool = True) -> tuple[str | None, str | No
     if ensure_fresh and isinstance(refresh_token, str) and refresh_token and CLIENT_ID_DEFAULT:
         needs_refresh = _should_refresh_access_token(access_token, last_refresh)
         if needs_refresh or not (isinstance(access_token, str) and access_token):
-            refreshed = _refresh_chatgpt_tokens(refresh_token, CLIENT_ID_DEFAULT)
-            if refreshed:
-                access_token = refreshed.get("access_token") or access_token
-                id_token = refreshed.get("id_token") or id_token
-                refresh_token = refreshed.get("refresh_token") or refresh_token
-                account_id = refreshed.get("account_id") or account_id
+            with _TOKEN_REFRESH_LOCK:
+                needs_refresh_again = _should_refresh_access_token(access_token, last_refresh)
+                if needs_refresh_again or not (isinstance(access_token, str) and access_token):
+                    timeout = int(os.getenv("CHATGPT_TOKEN_REFRESH_TIMEOUT", "30"))
+                    refreshed = _refresh_chatgpt_tokens_with_retry(
+                        refresh_token,
+                        CLIENT_ID_DEFAULT,
+                        max_retries=3,
+                        request_timeout=timeout
+                    )
+                    if refreshed:
+                        access_token = refreshed.get("access_token") or access_token
+                        id_token = refreshed.get("id_token") or id_token
+                        refresh_token = refreshed.get("refresh_token") or refresh_token
+                        account_id = refreshed.get("account_id") or account_id
 
-                updated_tokens = dict(tokens)
-                if isinstance(access_token, str) and access_token:
-                    updated_tokens["access_token"] = access_token
-                if isinstance(id_token, str) and id_token:
-                    updated_tokens["id_token"] = id_token
-                if isinstance(refresh_token, str) and refresh_token:
-                    updated_tokens["refresh_token"] = refresh_token
-                if isinstance(account_id, str) and account_id:
-                    updated_tokens["account_id"] = account_id
+                        updated_tokens = dict(tokens)
+                        if isinstance(access_token, str) and access_token:
+                            updated_tokens["access_token"] = access_token
+                        if isinstance(id_token, str) and id_token:
+                            updated_tokens["id_token"] = id_token
+                        if isinstance(refresh_token, str) and refresh_token:
+                            updated_tokens["refresh_token"] = refresh_token
+                        if isinstance(account_id, str) and account_id:
+                            updated_tokens["account_id"] = account_id
 
-                persisted = _persist_refreshed_auth(auth, updated_tokens)
-                if persisted is not None:
-                    auth, tokens = persisted
-                else:
-                    tokens = updated_tokens
+                        persisted = _persist_refreshed_auth(auth, updated_tokens)
+                        if persisted is not None:
+                            auth, tokens = persisted
+                        else:
+                            tokens = updated_tokens
 
     if not isinstance(account_id, str) or not account_id:
         account_id = _derive_account_id(id_token)
@@ -264,6 +277,32 @@ def load_chatgpt_tokens(ensure_fresh: bool = True) -> tuple[str | None, str | No
     id_token = id_token if isinstance(id_token, str) and id_token else None
     account_id = account_id if isinstance(account_id, str) and account_id else None
     return access_token, account_id, id_token
+
+
+def _refresh_chatgpt_tokens_with_retry(
+    refresh_token: str,
+    client_id: str,
+    max_retries: int = 3,
+    request_timeout: int | None = None
+) -> Optional[Dict[str, Optional[str]]]:
+    timeout = request_timeout or int(os.getenv("CHATGPT_TOKEN_REFRESH_TIMEOUT", "30"))
+
+    for attempt in range(1, max_retries + 1):
+        if attempt > 1:
+            backoff_seconds = 4 ** (attempt - 2)
+            eprint(f"Token refresh retry attempt {attempt}/{max_retries} after {backoff_seconds}s delay")
+            time.sleep(backoff_seconds)
+
+        try:
+            result = _refresh_chatgpt_tokens(refresh_token, client_id, timeout)
+            if result is not None:
+                return result
+        except Exception as exc:
+            eprint(f"Token refresh attempt {attempt} failed: {exc}")
+            if attempt == max_retries:
+                return None
+
+    return None
 
 
 def _should_refresh_access_token(access_token: Optional[str], last_refresh: Any) -> bool:
@@ -288,7 +327,8 @@ def _should_refresh_access_token(access_token: Optional[str], last_refresh: Any)
     return False
 
 
-def _refresh_chatgpt_tokens(refresh_token: str, client_id: str) -> Optional[Dict[str, Optional[str]]]:
+def _refresh_chatgpt_tokens(refresh_token: str, client_id: str, timeout: int | None = None) -> Optional[Dict[str, Optional[str]]]:
+    timeout = timeout or int(os.getenv("CHATGPT_TOKEN_REFRESH_TIMEOUT", "30"))
     payload = {
         "grant_type": "refresh_token",
         "refresh_token": refresh_token,
@@ -297,7 +337,7 @@ def _refresh_chatgpt_tokens(refresh_token: str, client_id: str) -> Optional[Dict
     }
 
     try:
-        resp = requests.post(OAUTH_TOKEN_URL, json=payload, timeout=30)
+        resp = requests.post(OAUTH_TOKEN_URL, json=payload, timeout=timeout)
     except requests.RequestException as exc:
         eprint(f"ERROR: failed to refresh ChatGPT token: {exc}")
         return None

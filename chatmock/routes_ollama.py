@@ -7,7 +7,7 @@ from typing import Any, Dict, List
 
 from flask import Blueprint, Response, current_app, jsonify, make_response, request, stream_with_context
 
-from .config import BASE_INSTRUCTIONS, GPT5_CODEX_INSTRUCTIONS
+from .config import BASE_INSTRUCTIONS, GPT5_CODEX_INSTRUCTIONS, CONTENT_TYPE_PROMPTS
 from .limits import record_rate_limits_from_response
 from .http import build_cors_headers
 from .reasoning import (
@@ -69,12 +69,37 @@ def ollama_version() -> Response:
     return resp
 
 
-def _instructions_for_model(model: str) -> str:
+def _get_specialized_instructions(content_type: str | None) -> str | None:
+    """Get specialized instructions for content-type specific requests."""
+    if not isinstance(content_type, str) or not content_type.strip():
+        return None
+
+    content_type = content_type.strip().lower()
+    prompts = current_app.config.get("CONTENT_TYPE_PROMPTS", {})
+    return prompts.get(content_type)
+
+
+def _merge_instructions(base: str, specialized: str | None) -> str:
+    """Merge base instructions with specialized content-type instructions."""
+    if not specialized:
+        return base
+
+    return f"{base}\n\n## SPECIALIZED INSTRUCTIONS FOR {specialized.split()[0].upper()}:\n\n{specialized}"
+
+
+def _instructions_for_model(model: str, content_type: str | None = None) -> str:
     base = current_app.config.get("BASE_INSTRUCTIONS", BASE_INSTRUCTIONS)
     if model.startswith("gpt-5-codex") or model.startswith("gpt-5.1-codex") or model.startswith("gpt-5.2-codex"):
         codex = current_app.config.get("GPT5_CODEX_INSTRUCTIONS") or GPT5_CODEX_INSTRUCTIONS
         if isinstance(codex, str) and codex.strip():
-            return codex
+            base = codex
+
+    # Apply specialized instructions if content-type provided
+    if content_type:
+        specialized = _get_specialized_instructions(content_type)
+        if specialized:
+            base = _merge_instructions(base, specialized)
+
     return base
 
 
@@ -214,6 +239,7 @@ def ollama_chat() -> Response:
     reasoning_effort = current_app.config.get("REASONING_EFFORT", "medium")
     reasoning_summary = current_app.config.get("REASONING_SUMMARY", "auto")
     reasoning_compat = current_app.config.get("REASONING_COMPAT", "think-tags")
+    content_type = request.headers.get("X-Prompt-Type", "").strip().lower() or None
 
     try:
         raw = request.get_data(cache=True, as_text=True) or ""
@@ -296,7 +322,7 @@ def ollama_chat() -> Response:
     upstream, error_resp = start_upstream_request(
         normalized_model,
         input_items,
-        instructions=_instructions_for_model(normalized_model),
+        instructions=_instructions_for_model(normalized_model, content_type),
         tools=tools_responses,
         tool_choice=tool_choice,
         parallel_tool_calls=parallel_tool_calls,
@@ -336,7 +362,7 @@ def ollama_chat() -> Response:
             upstream2, err2 = start_upstream_request(
                 normalize_model_name(model),
                 input_items,
-                instructions=BASE_INSTRUCTIONS,
+                instructions=_instructions_for_model(normalize_model_name(model), content_type),
                 tools=base_tools_only,
                 tool_choice=safe_choice,
                 parallel_tool_calls=parallel_tool_calls,

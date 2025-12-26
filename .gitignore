@@ -19,3 +19,17 @@ dist/
 
 # OS clutter
 .DS_Store
+
+# Sensitive credential files - NEVER commit these
+.env.local
+.env.*.local
+auth.json
+*.secret
+credentials.json
+deploy.local.md
+
+# Local development files
+.idea/
+.vscode/
+*.swp
+*.swo
