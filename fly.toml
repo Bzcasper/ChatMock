@@ -5,7 +5,7 @@ primary_region = "ord"
 dockerfile = "Dockerfile"
 
 [env]
-VERBOSE = "false"
+VERBOSE = "true"
 VERBOSE_OBFUSCATION = "false"
 CHATGPT_TOKEN_REFRESH_TIMEOUT = "30"
 CHATGPT_TOKEN_REFRESH_MAX_RETRIES = "3"

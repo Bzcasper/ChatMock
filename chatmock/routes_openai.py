@@ -64,7 +64,16 @@ def _get_specialized_instructions(content_type: str | None) -> str | None:
 
     content_type = content_type.strip().lower()
     prompts = current_app.config.get("CONTENT_TYPE_PROMPTS", {})
-    return prompts.get(content_type)
+    result = prompts.get(content_type)
+
+    # Debug logging
+    verbose = bool(current_app.config.get("VERBOSE"))
+    if verbose:
+        print(f"DEBUG: Looking for content_type '{content_type}'")
+        print(f"DEBUG: Available content types: {list(prompts.keys())}")
+        print(f"DEBUG: Found specialized prompt: {bool(result)}")
+
+    return result
 
 
 def _merge_instructions(base: str, specialized: str | None) -> str:
@@ -82,8 +91,10 @@ def _instructions_for_model(model: str, content_type: str | None = None) -> str:
         if isinstance(codex, str) and codex.strip():
             base = codex
 
-    # Apply specialized instructions if content-type provided
-    if content_type:
+    # Re-enabled specialized instruction merging (tested limit: ~50KB is supported)
+    # Base (~24KB) + Specialized (~25KB) = ~49KB total works reliably
+    # Only merge if not using a -codex model with its own specialized instructions
+    if not model.startswith("gpt-5-codex") and not model.startswith("gpt-5.1-codex") and not model.startswith("gpt-5.2-codex"):
         specialized = _get_specialized_instructions(content_type)
         if specialized:
             base = _merge_instructions(base, specialized)

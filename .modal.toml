@@ -1,0 +1,16 @@
+[trap]
+token_id = "ak-AOJ5ETmBNjMm7biHjKxLXR"
+token_secret = "as-IOg9RIirb15uDZQTTAQvEX"
+
+[bzcasper]
+token_id = "ak-T3ZDv8miPKxN0zWIY1BRLg"
+token_secret = "as-ICajkf93XwuULz8pHspphm"
+active = true
+
+[robertmcasper]
+token_id = "ak-YQWGL3Rrxq5FJAcDmwGO4Z"
+token_secret = "as-crzqtzmH57eausqXKjWo7V"
+
+[ai-tool-pool]
+token_id = "ak-Jw4exyzCg2DCnnuy71Cm4y"
+token_secret = "as-W6rzgNIiWUCyQGAqXmZvvp"
