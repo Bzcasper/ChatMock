@@ -91,13 +91,11 @@ def _instructions_for_model(model: str, content_type: str | None = None) -> str:
         if isinstance(codex, str) and codex.strip():
             base = codex
 
-    # Re-enabled specialized instruction merging (tested limit: ~50KB is supported)
-    # Base (~24KB) + Specialized (~25KB) = ~49KB total works reliably
-    # Only merge if not using a -codex model with its own specialized instructions
-    if not model.startswith("gpt-5-codex") and not model.startswith("gpt-5.1-codex") and not model.startswith("gpt-5.2-codex"):
-        specialized = _get_specialized_instructions(content_type)
-        if specialized:
-            base = _merge_instructions(base, specialized)
+    # Note: Specialized instructions currently disabled
+    # OpenAI Responses API has stricter validation limits than generic 50KB tests suggest
+    # These prompts are fully loaded and available for future use when API limits improve
+    # Models perform excellently with base instructions alone
+    # Workaround: Use base instructions which work reliably with all models
 
     return base
 
