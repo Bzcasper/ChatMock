@@ -91,13 +91,54 @@ def _instructions_for_model(model: str, content_type: str | None = None) -> str:
         if isinstance(codex, str) and codex.strip():
             base = codex
 
-    # Note: Specialized instructions currently disabled
-    # OpenAI Responses API has stricter validation limits than generic 50KB tests suggest
-    # These prompts are fully loaded and available for future use when API limits improve
-    # Models perform excellently with base instructions alone
-    # Workaround: Use base instructions which work reliably with all models
+    # Note: Specialized instructions injected via message prefix (Option C)
+    # Instead of merging into instructions parameter (which has strict API limits),
+    # specialized content is injected as an initial message to the model.
+    # This avoids the "Upstream error" from oversized instruction payloads.
 
     return base
+
+
+def _get_specialized_context_message(content_type: str | None) -> dict | None:
+    """Create a context message for specialized content types via message injection.
+
+    This implements Option C: Dynamic Instruction Injection.
+    Specialized prompts are injected as message content rather than merged into
+    the instructions parameter, avoiding OpenAI Responses API size validation limits.
+    """
+    if not isinstance(content_type, str) or not content_type.strip():
+        return None
+
+    content_type = content_type.strip().lower()
+    prompts = current_app.config.get("CONTENT_TYPE_PROMPTS", {})
+    specialized = prompts.get(content_type)
+
+    if not specialized:
+        return None
+
+    # Debug logging
+    verbose = bool(current_app.config.get("VERBOSE"))
+    if verbose:
+        print(f"DEBUG: Injecting specialized prompt for content_type '{content_type}'")
+
+    # Create a message that injects the specialized prompt content
+    # The model will see this as an explicit instruction about how to behave
+    context_text = f"""<specialized_mode type="{content_type}">
+{specialized}
+</specialized_mode>
+
+Please acknowledge you are now operating in {content_type} mode and apply these specialized guidelines to all subsequent responses in this conversation."""
+
+    return {
+        "type": "message",
+        "role": "user",
+        "content": [
+            {
+                "type": "input_text",
+                "text": context_text
+            }
+        ]
+    }
 
 
 @openai_bp.route("/v1/chat/completions", methods=["POST"])
@@ -203,6 +244,11 @@ def chat_completions() -> Response:
         input_items = [
             {"type": "message", "role": "user", "content": [{"type": "input_text", "text": payload.get("prompt")}]}
         ]
+
+    # Inject specialized context message if content-type specified (Option C)
+    specialized_msg = _get_specialized_context_message(content_type)
+    if specialized_msg and input_items:
+        input_items = [specialized_msg] + input_items
 
     model_reasoning = extract_reasoning_from_model_name(requested_model)
     reasoning_overrides = payload.get("reasoning") if isinstance(payload.get("reasoning"), dict) else model_reasoning
@@ -410,6 +456,7 @@ def completions() -> Response:
     debug_model = current_app.config.get("DEBUG_MODEL")
     reasoning_effort = current_app.config.get("REASONING_EFFORT", "medium")
     reasoning_summary = current_app.config.get("REASONING_SUMMARY", "auto")
+    content_type = request.headers.get("X-Prompt-Type", "").strip().lower() or None
 
     raw = request.get_data(cache=True, as_text=True) or ""
     if verbose:
@@ -438,6 +485,11 @@ def completions() -> Response:
 
     messages = [{"role": "user", "content": prompt or ""}]
     input_items = convert_chat_messages_to_responses_input(messages)
+
+    # Inject specialized context message if content-type specified (Option C)
+    specialized_msg = _get_specialized_context_message(content_type)
+    if specialized_msg and input_items:
+        input_items = [specialized_msg] + input_items
 
     model_reasoning = extract_reasoning_from_model_name(requested_model)
     reasoning_overrides = payload.get("reasoning") if isinstance(payload.get("reasoning"), dict) else model_reasoning
