@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from typing import Any, Dict, List
 
 from flask import Blueprint, Response, current_app, jsonify, make_response, request
+
+# Configure production logging
+logger = logging.getLogger(__name__)
 
 from .config import BASE_INSTRUCTIONS, GPT5_CODEX_INSTRUCTIONS
 from .limits import record_rate_limits_from_response
@@ -105,40 +109,72 @@ def _get_specialized_context_message(content_type: str | None) -> dict | None:
     This implements Option C: Dynamic Instruction Injection.
     Specialized prompts are injected as message content rather than merged into
     the instructions parameter, avoiding OpenAI Responses API size validation limits.
+
+    Returns None if content_type is invalid or not found.
+    Logs errors for production debugging.
     """
-    if not isinstance(content_type, str) or not content_type.strip():
-        return None
+    try:
+        if not isinstance(content_type, str) or not content_type.strip():
+            return None
 
-    content_type = content_type.strip().lower()
-    prompts = current_app.config.get("CONTENT_TYPE_PROMPTS", {})
-    specialized = prompts.get(content_type)
+        content_type_normalized = content_type.strip().lower()
 
-    if not specialized:
-        return None
+        # Validate content_type format (alphanumeric + underscore only)
+        if not all(c.isalnum() or c == '_' for c in content_type_normalized):
+            logger.warning(f"Invalid content_type format: {content_type}")
+            return None
 
-    # Debug logging
-    verbose = bool(current_app.config.get("VERBOSE"))
-    if verbose:
-        print(f"DEBUG: Injecting specialized prompt for content_type '{content_type}'")
+        prompts = current_app.config.get("CONTENT_TYPE_PROMPTS", {})
+        if not isinstance(prompts, dict):
+            logger.error("CONTENT_TYPE_PROMPTS config is not a dictionary")
+            return None
 
-    # Create a message that injects the specialized prompt content
-    # The model will see this as an explicit instruction about how to behave
-    context_text = f"""<specialized_mode type="{content_type}">
+        specialized = prompts.get(content_type_normalized)
+
+        if not specialized:
+            verbose = bool(current_app.config.get("VERBOSE"))
+            if verbose:
+                logger.debug(f"Specialized prompt not found for content_type: {content_type_normalized}")
+            return None
+
+        # Validate specialized prompt content
+        if not isinstance(specialized, str) or not specialized.strip():
+            logger.warning(f"Specialized prompt for '{content_type_normalized}' is empty or invalid")
+            return None
+
+        # Check prompt size doesn't exceed reasonable limits (message content has higher limits)
+        prompt_size = len(specialized.encode('utf-8'))
+        max_prompt_size = 100 * 1024  # 100KB limit for safety
+        if prompt_size > max_prompt_size:
+            logger.error(f"Specialized prompt '{content_type_normalized}' exceeds size limit: {prompt_size} > {max_prompt_size}")
+            return None
+
+        verbose = bool(current_app.config.get("VERBOSE"))
+        if verbose:
+            logger.info(f"Injecting specialized prompt for '{content_type_normalized}' ({prompt_size} bytes)")
+
+        # Create a message that injects the specialized prompt content
+        # The model will see this as an explicit instruction about how to behave
+        context_text = f"""<specialized_mode type="{content_type_normalized}">
 {specialized}
 </specialized_mode>
 
-Please acknowledge you are now operating in {content_type} mode and apply these specialized guidelines to all subsequent responses in this conversation."""
+Please acknowledge you are now operating in {content_type_normalized} mode and apply these specialized guidelines to all subsequent responses in this conversation."""
 
-    return {
-        "type": "message",
-        "role": "user",
-        "content": [
-            {
-                "type": "input_text",
-                "text": context_text
-            }
-        ]
-    }
+        return {
+            "type": "message",
+            "role": "user",
+            "content": [
+                {
+                    "type": "input_text",
+                    "text": context_text
+                }
+            ]
+        }
+
+    except Exception as e:
+        logger.exception(f"Error in _get_specialized_context_message: {str(e)}")
+        return None
 
 
 @openai_bp.route("/v1/chat/completions", methods=["POST"])
@@ -246,9 +282,17 @@ def chat_completions() -> Response:
         ]
 
     # Inject specialized context message if content-type specified (Option C)
-    specialized_msg = _get_specialized_context_message(content_type)
-    if specialized_msg and input_items:
-        input_items = [specialized_msg] + input_items
+    try:
+        specialized_msg = _get_specialized_context_message(content_type)
+        if specialized_msg and input_items:
+            input_items = [specialized_msg] + input_items
+            if verbose:
+                logger.info(f"Successfully injected specialized prompt: {content_type}")
+    except Exception as e:
+        logger.exception(f"Error injecting specialized prompt '{content_type}': {str(e)}")
+        # Continue without specialized prompt - fallback to base instructions
+        if verbose:
+            logger.warning("Continuing without specialized prompt due to injection error")
 
     model_reasoning = extract_reasoning_from_model_name(requested_model)
     reasoning_overrides = payload.get("reasoning") if isinstance(payload.get("reasoning"), dict) else model_reasoning
@@ -487,9 +531,17 @@ def completions() -> Response:
     input_items = convert_chat_messages_to_responses_input(messages)
 
     # Inject specialized context message if content-type specified (Option C)
-    specialized_msg = _get_specialized_context_message(content_type)
-    if specialized_msg and input_items:
-        input_items = [specialized_msg] + input_items
+    try:
+        specialized_msg = _get_specialized_context_message(content_type)
+        if specialized_msg and input_items:
+            input_items = [specialized_msg] + input_items
+            if verbose:
+                logger.info(f"Successfully injected specialized prompt: {content_type}")
+    except Exception as e:
+        logger.exception(f"Error injecting specialized prompt '{content_type}': {str(e)}")
+        # Continue without specialized prompt - fallback to base instructions
+        if verbose:
+            logger.warning("Continuing without specialized prompt due to injection error")
 
     model_reasoning = extract_reasoning_from_model_name(requested_model)
     reasoning_overrides = payload.get("reasoning") if isinstance(payload.get("reasoning"), dict) else model_reasoning
@@ -613,6 +665,46 @@ def completions() -> Response:
     for k, v in build_cors_headers().items():
         resp.headers.setdefault(k, v)
     return resp
+
+
+@openai_bp.route("/health", methods=["GET"])
+def health_check() -> Response:
+    """Health check endpoint for production monitoring."""
+    try:
+        # Check basic configuration
+        prompts = current_app.config.get("CONTENT_TYPE_PROMPTS")
+        base_instructions = current_app.config.get("BASE_INSTRUCTIONS")
+
+        health_status = {
+            "status": "healthy",
+            "timestamp": int(time.time()),
+            "checks": {
+                "config": "ok" if (base_instructions and prompts) else "degraded",
+                "specialized_prompts": "ok" if isinstance(prompts, dict) and len(prompts) > 0 else "degraded",
+            }
+        }
+
+        if health_status["checks"]["config"] == "degraded":
+            logger.warning("Health check: config is degraded")
+            health_status["status"] = "degraded"
+
+        status_code = 200 if health_status["status"] == "healthy" else 503
+        resp = make_response(jsonify(health_status), status_code)
+        for k, v in build_cors_headers().items():
+            resp.headers.setdefault(k, v)
+        return resp
+
+    except Exception as e:
+        logger.exception(f"Health check failed: {str(e)}")
+        error_response = {
+            "status": "unhealthy",
+            "timestamp": int(time.time()),
+            "error": str(e)
+        }
+        resp = make_response(jsonify(error_response), 503)
+        for k, v in build_cors_headers().items():
+            resp.headers.setdefault(k, v)
+        return resp
 
 
 @openai_bp.route("/v1/models", methods=["GET"])
