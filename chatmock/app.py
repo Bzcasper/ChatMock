@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime
+import logging
 
 from flask import Flask, jsonify
 
@@ -22,6 +23,12 @@ def create_app(
     default_web_search: bool = False,
 ) -> Flask:
     app = Flask(__name__)
+
+    # Configure logging for the application and all modules
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
 
     app.config.update(
         VERBOSE=bool(verbose),
