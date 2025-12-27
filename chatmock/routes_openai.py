@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 from .config import BASE_INSTRUCTIONS, GPT5_CODEX_INSTRUCTIONS
 from .limits import record_rate_limits_from_response
 from .http import build_cors_headers
+from .production import RateLimiter
 from .reasoning import (
     allowed_efforts_for_model,
     apply_reasoning_to_message,
@@ -29,6 +30,40 @@ from .utils import (
 
 
 openai_bp = Blueprint("openai", __name__)
+
+# Initialize rate limiter (100 requests per 60 seconds)
+_rate_limiter = RateLimiter(max_requests=100, window_seconds=60)
+
+# Valid model definitions
+_MODEL_GROUPS = [
+    ("gpt-5", ["high", "medium", "low", "minimal"]),
+    ("gpt-5.1", ["high", "medium", "low"]),
+    ("gpt-5.2", ["xhigh", "high", "medium", "low"]),
+    ("gpt-5-codex", ["high", "medium", "low"]),
+    ("gpt-5.2-codex", ["xhigh", "high", "medium", "low"]),
+    ("gpt-5.1-codex", ["high", "medium", "low"]),
+    ("gpt-5.1-codex-max", ["xhigh", "high", "medium", "low"]),
+    ("gpt-5.1-codex-mini", []),
+    ("codex-mini", []),
+]
+
+
+def _get_valid_model_ids(expose_variants: bool = False) -> set[str]:
+    """Get set of valid model IDs."""
+    model_ids: set[str] = set()
+    for base, efforts in _MODEL_GROUPS:
+        model_ids.add(base)
+        if expose_variants:
+            model_ids.update([f"{base}-{effort}" for effort in efforts])
+    return model_ids
+
+
+def _validate_model_id(model_id: str | None, expose_variants: bool = False) -> bool:
+    """Check if a model ID is valid."""
+    if not model_id or not isinstance(model_id, str):
+        return False
+    valid_ids = _get_valid_model_ids(expose_variants)
+    return model_id in valid_ids
 
 
 def _log_json(prefix: str, payload: Any) -> None:
@@ -155,8 +190,12 @@ def _get_specialized_context_message(content_type: str | None) -> dict | None:
 
         # Create a message that injects the specialized prompt content
         # The model will see this as an explicit instruction about how to behave
+        # Escape special XML characters to prevent injection attacks
+        import html
+        escaped_prompt = html.escape(specialized, quote=True)
+
         context_text = f"""<specialized_mode type="{content_type_normalized}">
-{specialized}
+{escaped_prompt}
 </specialized_mode>
 
 Please acknowledge you are now operating in {content_type_normalized} mode and apply these specialized guidelines to all subsequent responses in this conversation."""
@@ -179,6 +218,15 @@ Please acknowledge you are now operating in {content_type_normalized} mode and a
 
 @openai_bp.route("/v1/chat/completions", methods=["POST"])
 def chat_completions() -> Response:
+    # Check rate limit
+    if not _rate_limiter.is_allowed():
+        retry_after = _rate_limiter.get_retry_after()
+        err = {"error": {"message": "Rate limit exceeded"}}
+        resp = jsonify(err)
+        resp.status_code = 429
+        resp.headers["Retry-After"] = str(retry_after)
+        return resp
+
     verbose = bool(current_app.config.get("VERBOSE"))
     verbose_obfuscation = bool(current_app.config.get("VERBOSE_OBFUSCATION"))
     reasoning_effort = current_app.config.get("REASONING_EFFORT", "medium")
@@ -206,6 +254,15 @@ def chat_completions() -> Response:
 
     requested_model = payload.get("model")
     model = normalize_model_name(requested_model, debug_model)
+
+    # Validate model ID
+    expose_variants = bool(current_app.config.get("EXPOSE_REASONING_MODELS"))
+    if not _validate_model_id(requested_model, expose_variants):
+        err = {"error": {"message": f"Model '{requested_model}' not found"}}
+        if verbose:
+            _log_json("OUT POST /v1/chat/completions", err)
+        return jsonify(err), 404
+
     messages = payload.get("messages")
     if messages is None and isinstance(payload.get("prompt"), str):
         messages = [{"role": "user", "content": payload.get("prompt") or ""}]
@@ -326,49 +383,59 @@ def chat_completions() -> Response:
                 pass
         return error_resp
 
-    record_rate_limits_from_response(upstream)
+    try:
+        record_rate_limits_from_response(upstream)
 
-    created = int(time.time())
-    if upstream.status_code >= 400:
-        try:
-            raw = upstream.content
-            err_body = json.loads(raw.decode("utf-8", errors="ignore")) if raw else {"raw": upstream.text}
-        except Exception:
-            err_body = {"raw": upstream.text}
-        if had_responses_tools:
-            if verbose:
-                print("[Passthrough] Upstream rejected tools; retrying without extra tools (args redacted)")
-            base_tools_only = convert_tools_chat_to_responses(payload.get("tools"))
-            safe_choice = payload.get("tool_choice", "auto")
-            upstream2, err2 = start_upstream_request(
-                model,
-                input_items,
-                instructions=BASE_INSTRUCTIONS,
-                tools=base_tools_only,
-                tool_choice=safe_choice,
-                parallel_tool_calls=parallel_tool_calls,
-                reasoning_param=reasoning_param,
-            )
-            record_rate_limits_from_response(upstream2)
-            if err2 is None and upstream2 is not None and upstream2.status_code < 400:
-                upstream = upstream2
-            else:
-                err = {
-                    "error": {
-                        "message": (err_body.get("error", {}) or {}).get("message", "Upstream error"),
-                        "code": "RESPONSES_TOOLS_REJECTED",
+        created = int(time.time())
+        if upstream.status_code >= 400:
+            try:
+                raw = upstream.content
+                err_body = json.loads(raw.decode("utf-8", errors="ignore")) if raw else {"raw": upstream.text}
+            except Exception:
+                err_body = {"raw": upstream.text}
+            if had_responses_tools:
+                if verbose:
+                    print("[Passthrough] Upstream rejected tools; retrying without extra tools (args redacted)")
+                base_tools_only = convert_tools_chat_to_responses(payload.get("tools"))
+                safe_choice = payload.get("tool_choice", "auto")
+                upstream2, err2 = start_upstream_request(
+                    model,
+                    input_items,
+                    instructions=BASE_INSTRUCTIONS,
+                    tools=base_tools_only,
+                    tool_choice=safe_choice,
+                    parallel_tool_calls=parallel_tool_calls,
+                    reasoning_param=reasoning_param,
+                )
+                record_rate_limits_from_response(upstream2)
+                if err2 is None and upstream2 is not None and upstream2.status_code < 400:
+                    upstream.close()
+                    upstream = upstream2
+                else:
+                    err = {
+                        "error": {
+                            "message": (err_body.get("error", {}) or {}).get("message", "Upstream error"),
+                            "code": "RESPONSES_TOOLS_REJECTED",
+                        }
                     }
-                }
+                    if verbose:
+                        _log_json("OUT POST /v1/chat/completions", err)
+                    upstream.close()
+                    if upstream2 is not None:
+                        upstream2.close()
+                    return jsonify(err), (upstream2.status_code if upstream2 is not None else upstream.status_code)
+            else:
+                if verbose:
+                    print("Upstream error status=", upstream.status_code)
+                err = {"error": {"message": (err_body.get("error", {}) or {}).get("message", "Upstream error")}}
                 if verbose:
                     _log_json("OUT POST /v1/chat/completions", err)
-                return jsonify(err), (upstream2.status_code if upstream2 is not None else upstream.status_code)
-        else:
-            if verbose:
-                print("Upstream error status=", upstream.status_code)
-            err = {"error": {"message": (err_body.get("error", {}) or {}).get("message", "Upstream error")}}
-            if verbose:
-                _log_json("OUT POST /v1/chat/completions", err)
-            return jsonify(err), upstream.status_code
+                upstream.close()
+                return jsonify(err), upstream.status_code
+    except Exception as e:
+        if upstream is not None:
+            upstream.close()
+        raise
 
     if is_stream:
         if verbose:
@@ -495,6 +562,15 @@ def chat_completions() -> Response:
 
 @openai_bp.route("/v1/completions", methods=["POST"])
 def completions() -> Response:
+    # Check rate limit
+    if not _rate_limiter.is_allowed():
+        retry_after = _rate_limiter.get_retry_after()
+        err = {"error": {"message": "Rate limit exceeded"}}
+        resp = jsonify(err)
+        resp.status_code = 429
+        resp.headers["Retry-After"] = str(retry_after)
+        return resp
+
     verbose = bool(current_app.config.get("VERBOSE"))
     verbose_obfuscation = bool(current_app.config.get("VERBOSE_OBFUSCATION"))
     debug_model = current_app.config.get("DEBUG_MODEL")
@@ -518,6 +594,15 @@ def completions() -> Response:
 
     requested_model = payload.get("model")
     model = normalize_model_name(requested_model, debug_model)
+
+    # Validate model ID
+    expose_variants = bool(current_app.config.get("EXPOSE_REASONING_MODELS"))
+    if not _validate_model_id(requested_model, expose_variants):
+        err = {"error": {"message": f"Model '{requested_model}' not found"}}
+        if verbose:
+            _log_json("OUT POST /v1/completions", err)
+        return jsonify(err), 404
+
     prompt = payload.get("prompt")
     if isinstance(prompt, list):
         prompt = "".join([p if isinstance(p, str) else "" for p in prompt])
@@ -710,19 +795,8 @@ def health_check() -> Response:
 @openai_bp.route("/v1/models", methods=["GET"])
 def list_models() -> Response:
     expose_variants = bool(current_app.config.get("EXPOSE_REASONING_MODELS"))
-    model_groups = [
-        ("gpt-5", ["high", "medium", "low", "minimal"]),
-        ("gpt-5.1", ["high", "medium", "low"]),
-        ("gpt-5.2", ["xhigh", "high", "medium", "low"]),
-        ("gpt-5-codex", ["high", "medium", "low"]),
-        ("gpt-5.2-codex", ["xhigh", "high", "medium", "low"]),
-        ("gpt-5.1-codex", ["high", "medium", "low"]),
-        ("gpt-5.1-codex-max", ["xhigh", "high", "medium", "low"]),
-        ("gpt-5.1-codex-mini", []),
-        ("codex-mini", []),
-    ]
     model_ids: List[str] = []
-    for base, efforts in model_groups:
+    for base, efforts in _MODEL_GROUPS:
         model_ids.append(base)
         if expose_variants:
             model_ids.extend([f"{base}-{effort}" for effort in efforts])

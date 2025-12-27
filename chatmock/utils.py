@@ -269,6 +269,8 @@ def load_chatgpt_tokens(ensure_fresh: bool = True) -> tuple[str | None, str | No
                             auth, tokens = persisted
                         else:
                             tokens = updated_tokens
+                    else:
+                        eprint("WARNING: Token refresh failed; using potentially expired tokens")
 
     if not isinstance(account_id, str) or not account_id:
         account_id = _derive_account_id(id_token)
@@ -286,6 +288,7 @@ def _refresh_chatgpt_tokens_with_retry(
     request_timeout: int | None = None
 ) -> Optional[Dict[str, Optional[str]]]:
     timeout = request_timeout or int(os.getenv("CHATGPT_TOKEN_REFRESH_TIMEOUT", "30"))
+    last_error: Exception | None = None
 
     for attempt in range(1, max_retries + 1):
         if attempt > 1:
@@ -298,10 +301,11 @@ def _refresh_chatgpt_tokens_with_retry(
             if result is not None:
                 return result
         except Exception as exc:
+            last_error = exc
             eprint(f"Token refresh attempt {attempt} failed: {exc}")
-            if attempt == max_retries:
-                return None
 
+    # All retries exhausted
+    eprint(f"Token refresh failed after {max_retries} attempts. Last error: {last_error}")
     return None
 
 
@@ -440,25 +444,29 @@ def sse_translate_chat(
     def _serialize_tool_args(eff_args: Any) -> str:
         """
         Serialize tool call arguments with proper JSON handling.
-        
+
         Args:
             eff_args: Arguments to serialize (dict, list, str, or other)
-            
+
         Returns:
             JSON string representation of the arguments
         """
-        if isinstance(eff_args, (dict, list)):
-            return json.dumps(eff_args)
-        elif isinstance(eff_args, str):
-            try:
-                parsed = json.loads(eff_args)
-                if isinstance(parsed, (dict, list)):
-                    return json.dumps(parsed) 
-                else:
-                    return json.dumps({"query": eff_args})  
-            except (json.JSONDecodeError, ValueError):
-                return json.dumps({"query": eff_args})
-        else:
+        try:
+            if isinstance(eff_args, (dict, list)):
+                return json.dumps(eff_args)
+            elif isinstance(eff_args, str):
+                try:
+                    parsed = json.loads(eff_args)
+                    if isinstance(parsed, (dict, list)):
+                        return json.dumps(parsed)
+                    else:
+                        return json.dumps({"query": eff_args})
+                except (json.JSONDecodeError, ValueError):
+                    return json.dumps({"query": eff_args})
+            else:
+                return json.dumps({"value": str(eff_args)})
+        except (TypeError, ValueError) as e:
+            logger.warning(f"Failed to serialize tool args: {e}; using empty object")
             return "{}"
     
     def _extract_usage(evt: Dict[str, Any]) -> Dict[str, int] | None:

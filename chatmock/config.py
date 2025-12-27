@@ -9,7 +9,13 @@ CLIENT_ID_DEFAULT = os.getenv("CHATGPT_LOCAL_CLIENT_ID") or "app_EMoamEEZ73f0CkX
 OAUTH_ISSUER_DEFAULT = os.getenv("CHATGPT_LOCAL_ISSUER") or "https://auth.openai.com"
 OAUTH_TOKEN_URL = f"{OAUTH_ISSUER_DEFAULT}/oauth/token"
 
-CHATGPT_RESPONSES_URL = "https://chatgpt.com/backend-api/codex/responses"
+CHATGPT_RESPONSES_URL = os.getenv("CHATGPT_RESPONSES_URL") or "https://chatgpt.com/backend-api/codex/responses"
+
+# Default fallback prompt if prompt.md is not found
+DEFAULT_BASE_INSTRUCTIONS = (
+    "You are a helpful AI assistant. Respond clearly and accurately to user queries. "
+    "Maintain context throughout the conversation and provide thoughtful, well-reasoned responses."
+)
 
 
 def _read_prompt_text(filename: str) -> str | None:
@@ -35,7 +41,13 @@ def _read_prompt_text(filename: str) -> str | None:
 def read_base_instructions() -> str:
     content = _read_prompt_text("prompt.md")
     if content is None:
-        raise FileNotFoundError("Failed to read prompt.md; expected adjacent to package or CWD.")
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(
+            "prompt.md not found; using default base instructions. "
+            "Consider placing prompt.md in project root or current working directory."
+        )
+        return DEFAULT_BASE_INSTRUCTIONS
     return content
 
 
