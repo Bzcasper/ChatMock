@@ -278,10 +278,12 @@ def chat_completions() -> Response:
 
     if isinstance(messages, list):
         sys_idx = next((i for i, m in enumerate(messages) if isinstance(m, dict) and m.get("role") == "system"), None)
-        if isinstance(sys_idx, int):
+        if isinstance(sys_idx, int) and 0 <= sys_idx < len(messages):
             sys_msg = messages.pop(sys_idx)
-            content = sys_msg.get("content") if isinstance(sys_msg, dict) else ""
-            messages.insert(0, {"role": "user", "content": content})
+            if isinstance(sys_msg, dict) and "content" in sys_msg:
+                content = sys_msg["content"]
+                if isinstance(content, str):
+                    messages.insert(0, {"role": "user", "content": content})
     is_stream = bool(payload.get("stream"))
     stream_options = payload.get("stream_options") if isinstance(payload.get("stream_options"), dict) else {}
     include_usage = bool(stream_options.get("include_usage", False))
@@ -495,6 +497,8 @@ def chat_completions() -> Response:
                 evt = json.loads(data)
             except Exception:
                 continue
+            if not isinstance(evt, dict):
+                continue
             kind = evt.get("type")
             mu = _extract_usage(evt)
             if mu:
@@ -554,7 +558,9 @@ def chat_completions() -> Response:
     }
     if verbose:
         _log_json("OUT POST /v1/chat/completions", completion)
-    resp = make_response(jsonify(completion), upstream.status_code)
+    # Validate upstream status code is a valid integer, default to 200
+    status_code = upstream.status_code if isinstance(upstream.status_code, int) and 100 <= upstream.status_code < 600 else 200
+    resp = make_response(jsonify(completion), status_code)
     for k, v in build_cors_headers().items():
         resp.headers.setdefault(k, v)
     return resp

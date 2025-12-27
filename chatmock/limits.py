@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping, Optional
 
 from .utils import get_home_dir
+
+logger = logging.getLogger(__name__)
 
 _PRIMARY_USED = "x-codex-primary-used-percent"
 _PRIMARY_WINDOW = "x-codex-primary-window-minutes"
@@ -50,7 +53,8 @@ def _parse_float(value: Any) -> Optional[float]:
         if not (parsed == parsed and parsed not in (float("inf"), float("-inf"))):
             return None
         return parsed
-    except Exception:
+    except Exception as e:
+        logger.debug(f"Failed to parse float value '{value}': {e}")
         return None
 
 
@@ -66,7 +70,8 @@ def _parse_int(value: Any) -> Optional[int]:
         if not value_str:
             return None
         return int(value_str)
-    except Exception:
+    except Exception as e:
+        logger.debug(f"Failed to parse int value '{value}': {e}")
         return None
 
 
@@ -74,8 +79,19 @@ def _parse_window(headers: Mapping[str, Any], used_key: str, window_key: str, re
     used_percent = _parse_float(headers.get(used_key))
     if used_percent is None:
         return None
+    # Validate used_percent is in reasonable range [0, 100]
+    if not (0 <= used_percent <= 100):
+        logger.warning(f"Rate limit used_percent out of range: {used_percent}")
+        return None
     window_minutes = _parse_int(headers.get(window_key))
     resets_in_seconds = _parse_int(headers.get(reset_key))
+    # Validate window and reset times are positive
+    if window_minutes is not None and window_minutes <= 0:
+        logger.warning(f"Rate limit window_minutes not positive: {window_minutes}")
+        return None
+    if resets_in_seconds is not None and resets_in_seconds < 0:
+        logger.warning(f"Rate limit resets_in_seconds negative: {resets_in_seconds}")
+        return None
     return RateLimitWindow(used_percent=used_percent, window_minutes=window_minutes, resets_in_seconds=resets_in_seconds)
 
 
@@ -86,7 +102,8 @@ def parse_rate_limit_headers(headers: Mapping[str, Any]) -> Optional[RateLimitSn
         if primary is None and secondary is None:
             return None
         return RateLimitSnapshot(primary=primary, secondary=secondary)
-    except Exception:
+    except Exception as e:
+        logger.error(f"Failed to parse rate limit headers: {e}")
         return None
 
 
@@ -122,9 +139,8 @@ def store_rate_limit_snapshot(snapshot: RateLimitSnapshot, captured_at: Optional
                 except OSError:
                     pass
             json.dump(payload, fp, indent=2)
-    except Exception:
-        # Silently ignore persistence errors.
-        pass
+    except Exception as e:
+        logger.warning(f"Failed to persist rate limit snapshot: {e}")
 
 
 def load_rate_limit_snapshot() -> Optional[StoredRateLimitSnapshot]:
@@ -133,7 +149,8 @@ def load_rate_limit_snapshot() -> Optional[StoredRateLimitSnapshot]:
             raw = json.load(fp)
     except FileNotFoundError:
         return None
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Failed to load rate limit snapshot: {e}")
         return None
 
     captured_raw = raw.get("captured_at")

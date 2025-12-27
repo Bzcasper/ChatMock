@@ -65,7 +65,7 @@ def _remember(fp: str, sid: str) -> None:
         return
     _FINGERPRINT_TO_UUID[fp] = sid
     _ORDER.append(fp)
-    if len(_ORDER) > _MAX_ENTRIES:
+    if len(_ORDER) >= _MAX_ENTRIES:
         oldest = _ORDER.pop(0)
         _FINGERPRINT_TO_UUID.pop(oldest, None)
 

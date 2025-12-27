@@ -4,6 +4,7 @@ import base64
 import datetime
 import hashlib
 import json
+import logging
 import os
 import secrets
 import sys
@@ -14,6 +15,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import requests
 
 from .config import CLIENT_ID_DEFAULT, OAUTH_TOKEN_URL
+
+logger = logging.getLogger(__name__)
 
 _TOKEN_REFRESH_LOCK = threading.Lock()
 
@@ -290,6 +293,8 @@ def _refresh_chatgpt_tokens_with_retry(
     timeout = request_timeout or int(os.getenv("CHATGPT_TOKEN_REFRESH_TIMEOUT", "30"))
     last_error: Exception | None = None
 
+    # Note: max_retries specifies total attempts (1 initial + retries), not retries count
+    # range(1, max_retries + 1) produces [1, 2, ..., max_retries] for total attempts
     for attempt in range(1, max_retries + 1):
         if attempt > 1:
             backoff_seconds = 4 ** (attempt - 2)
@@ -531,8 +536,8 @@ def sse_translate_chat(
                     if verbose and vlog:
                         try:
                             vlog(f"CM_TOOLS {kind} id={call_id} -> tool_calls(web_search)")
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.debug(f"Failed to log verbose output: {e}")
                     item = evt.get('item') if isinstance(evt.get('item'), dict) else {}
                     params_dict = ws_state.setdefault(call_id, {}) if isinstance(ws_state.get(call_id), dict) else {}
                     def _merge_from(src):
@@ -597,8 +602,8 @@ def sse_translate_chat(
                             ],
                         }
                         yield f"data: {json.dumps(finish_chunk)}\n\n".encode("utf-8")
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"Failed to yield stream chunk: {e}")
 
             if kind == "response.output_text.delta":
                 delta = evt.get("delta") or ""

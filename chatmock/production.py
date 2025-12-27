@@ -95,9 +95,16 @@ class RateLimiter:
         """Get seconds to wait before retry."""
         if not self.requests:
             return 0
-        oldest = min(self.requests)
-        retry_after = int((oldest + self.window_seconds - time.time()) + 1)
-        return max(1, retry_after)
+        try:
+            # Filter to numeric values only, then find minimum
+            numeric_requests = [r for r in self.requests if isinstance(r, (int, float))]
+            if not numeric_requests:
+                return 0
+            oldest = min(numeric_requests)
+            retry_after = int((oldest + self.window_seconds - time.time()) + 1)
+            return max(1, retry_after)
+        except Exception:
+            return 0
 
 
 def with_timeout(seconds: int):
