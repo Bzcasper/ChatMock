@@ -4,12 +4,13 @@ import hashlib
 import json
 import threading
 import uuid
+from collections import deque
 from typing import Any, Dict, List, Tuple
 
 
 _LOCK = threading.Lock()
 _FINGERPRINT_TO_UUID: Dict[str, str] = {}
-_ORDER: List[str] = []
+_ORDER: deque[str] = deque()
 _MAX_ENTRIES = 10000
 
 
@@ -66,7 +67,7 @@ def _remember(fp: str, sid: str) -> None:
     _FINGERPRINT_TO_UUID[fp] = sid
     _ORDER.append(fp)
     if len(_ORDER) >= _MAX_ENTRIES:
-        oldest = _ORDER.pop(0)
+        oldest = _ORDER.popleft()
         _FINGERPRINT_TO_UUID.pop(oldest, None)
 
 

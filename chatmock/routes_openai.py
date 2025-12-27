@@ -120,7 +120,11 @@ def _merge_instructions(base: str, specialized: str | None) -> str:
     if not specialized:
         return base
 
-    return f"{base}\n\n## SPECIALIZED INSTRUCTIONS FOR {specialized.split()[0].upper()}:\n\n{specialized}"
+    words = specialized.split()
+    if not words:
+        return base
+
+    return f"{base}\n\n## SPECIALIZED INSTRUCTIONS FOR {words[0].upper()}:\n\n{specialized}"
 
 
 def _instructions_for_model(model: str, content_type: str | None = None) -> str:

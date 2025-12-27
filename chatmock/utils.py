@@ -115,10 +115,12 @@ def convert_chat_messages_to_responses_input(messages: List[Dict[str, Any]]) -> 
                 data = data + ("=" * pad)
             try:
                 base64.b64decode(data, validate=True)
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Invalid base64 data in image URL: {e}")
                 return url
             return f"{header},{data}"
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Error processing image URL: {e}")
             return url
 
     input_items: List[Dict[str, Any]] = []

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import logging
 import os
 from flask import Response, jsonify, request
+
+logger = logging.getLogger(__name__)
 
 # Load allowed CORS origins from environment or use defaults
 ALLOWED_ORIGINS = os.getenv("ALLOWED_CORS_ORIGINS", "").split(",") if os.getenv("ALLOWED_CORS_ORIGINS") else ["*"]
@@ -19,7 +22,8 @@ def _validate_origin(origin: str | None) -> str:
     if origin in ALLOWED_ORIGINS:
         return origin
 
-    # Origin not in whitelist - return first allowed origin
+    # Origin not in whitelist - log and return first allowed origin
+    logger.warning(f"CORS origin rejected: {origin} (allowed: {ALLOWED_ORIGINS})")
     return ALLOWED_ORIGINS[0] if ALLOWED_ORIGINS else "*"
 
 

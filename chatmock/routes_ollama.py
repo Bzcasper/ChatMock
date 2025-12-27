@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import json
 import datetime
+import logging
 import time
 from typing import Any, Dict, List
 
 from flask import Blueprint, Response, current_app, jsonify, make_response, request, stream_with_context
+
+logger = logging.getLogger(__name__)
 
 from .config import BASE_INSTRUCTIONS, GPT5_CODEX_INSTRUCTIONS, CONTENT_TYPE_PROMPTS
 from .limits import record_rate_limits_from_response
@@ -26,11 +29,12 @@ ollama_bp = Blueprint("ollama", __name__)
 def _log_json(prefix: str, payload: Any) -> None:
     try:
         print(f"{prefix}\n{json.dumps(payload, indent=2, ensure_ascii=False)}")
-    except Exception:
+    except Exception as e:
+        logger.debug(f"Failed to log JSON: {e}")
         try:
             print(f"{prefix}\n{payload}")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Failed to log payload: {e}")
 
 
 def _wrap_stream_logging(label: str, iterator, enabled: bool):
@@ -46,8 +50,8 @@ def _wrap_stream_logging(label: str, iterator, enabled: bool):
                     else str(chunk)
                 )
                 print(f"{label}\n{text}")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Failed to log stream chunk: {e}")
             yield chunk
 
     return _gen()
@@ -351,7 +355,7 @@ def ollama_chat() -> Response:
 
     if upstream.status_code >= 400:
         try:
-            err_body = json.loads(upstream.content.decode("utf-8", errors="ignore")) if upstream.content else {"raw": upstream.text}
+            err_body = json.loads(upstream.content.decode("utf-8", errors="replace")) if upstream.content else {"raw": upstream.text}
         except Exception:
             err_body = {"raw": upstream.text}
         if had_responses_tools:
@@ -389,7 +393,7 @@ def ollama_chat() -> Response:
                 _log_json("OUT POST /api/chat", err)
             return jsonify(err), upstream.status_code
 
-    created_at = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    created_at = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     model_out = model if isinstance(model, str) and model.strip() else normalized_model
 
     if stream_req:
@@ -404,7 +408,7 @@ def ollama_chat() -> Response:
                 for raw_line in upstream.iter_lines(decode_unicode=False):
                     if not raw_line:
                         continue
-                    line = raw_line.decode("utf-8", errors="ignore") if isinstance(raw_line, (bytes, bytearray)) else raw_line
+                    line = raw_line.decode("utf-8", errors="replace") if isinstance(raw_line, (bytes, bytearray)) else raw_line
                     if not line.startswith("data: "):
                         continue
                     data = line[len("data: "):].strip()
@@ -574,7 +578,7 @@ def ollama_chat() -> Response:
         for raw in upstream.iter_lines(decode_unicode=False):
             if not raw:
                 continue
-            line = raw.decode("utf-8", errors="ignore") if isinstance(raw, (bytes, bytearray)) else raw
+            line = raw.decode("utf-8", errors="replace") if isinstance(raw, (bytes, bytearray)) else raw
             if not line.startswith("data: "):
                 continue
             data = line[len("data: "):].strip()
