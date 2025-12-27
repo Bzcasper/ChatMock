@@ -297,10 +297,89 @@ Stream response back to client
 
 ---
 
+## Solution: Option C - Dynamic Instruction Injection (IMPLEMENTED)
+
+### Problem
+The OpenAI Responses API has undocumented validation limits on the `instructions` parameter that are stricter than the documented API limits. Merging base prompt (23.6KB) with specialized prompts (21-28KB each) resulted in 49KB total, which triggered "Upstream error" responses despite passing generic size limit tests.
+
+### Solution Implemented
+**Option C: Dynamic Instruction Injection** - Inject specialized prompts as message prefixes instead of merging them into the instructions parameter.
+
+#### How It Works
+1. **Base Instructions Only**: The `instructions` parameter now always contains only the base prompt (23.6KB), which is under all API limits
+2. **Message Injection**: When `X-Prompt-Type` header is provided, specialized prompts are injected as the first message in the conversation
+3. **Message Format**: Specialized content is wrapped in XML-like tags for clarity:
+   ```xml
+   <specialized_mode type="story">
+   [specialized prompt content]
+   </specialized_mode>
+
+   Please acknowledge you are now operating in story mode...
+   ```
+4. **Model Behavior**: The model sees the specialized prompt as explicit instruction in the conversation and applies it to all subsequent responses
+
+#### Implementation Details
+**File Modified**: `chatmock/routes_openai.py:102-141`
+
+New function `_get_specialized_context_message(content_type)`:
+- Retrieves specialized prompt from config
+- Creates message object with specialized content as user input
+- Returns None if content_type not found or invalid
+
+Modified endpoints:
+- `/v1/chat/completions` - Injects specialized message before creating API request
+- `/v1/completions` - Also supports specialized message injection
+
+Code pattern:
+```python
+specialized_msg = _get_specialized_context_message(content_type)
+if specialized_msg and input_items:
+    input_items = [specialized_msg] + input_items
+```
+
+#### Test Results ✓ SUCCESSFUL
+All specialized content types working without API errors:
+
+| Content Type | Status | Response Quality | Test Date |
+|---|---|---|---|
+| **story** | ✓ Working | Noir-style narrative prose | 2025-12-26 |
+| **script** | ✓ Working | Formatted screenplay structure | 2025-12-26 |
+| **dialogue** | ✓ Working | Conversation format | 2025-12-26 |
+| **image** | ✓ Working | Visual style descriptions | 2025-12-26 |
+| **storyboard** | ✓ Working | Storyboard structure | 2025-12-26 |
+
+#### Why This Works
+- **Sidesteps API Limits**: Specialized content in message body (which has higher limits) vs instructions parameter (which has strict validation)
+- **No Rewriting Needed**: Existing specialized prompts work unchanged
+- **Maintains Compatibility**: Base instructions still work perfectly for all use cases
+- **Low Risk**: Minimal code changes, validates root cause hypothesis
+- **Fast Implementation**: Completed in 4 hours vs 8-12 hours for compression approach
+
+#### Deployment
+- Committed: `feat: Implement Option C - Dynamic Instruction Injection for specialized prompts`
+- Deployed: 2025-12-26 23:44:46Z to production (chatmock-prod)
+- Status: ✓ Verified working with all 5 specialized content types
+
+#### Usage
+To use specialized prompts, include `X-Prompt-Type` header in API requests:
+
+```bash
+curl https://chatmock-prod.fly.dev/v1/chat/completions \
+  -H "Authorization: Bearer key" \
+  -H "Content-Type: application/json" \
+  -H "X-Prompt-Type: story" \
+  -d '{
+    "model": "gpt-5.2",
+    "messages": [{"role":"user","content":"Write a noir opening"}]
+  }'
+```
+
+Supported values: `story`, `script`, `dialogue`, `image`, `storyboard`
+
 ## Future Development
 
-1. **Prompt Compression**: Reduce specialized prompts by 40-50% to enable merging
-2. **Delta System**: Refactor prompts as deltas rather than full replacements
-3. **API Limit Clarity**: Investigate OpenAI's exact instruction validation limits
-4. **Selective Loading**: Load only needed instruction sections per request
+1. **Monitor API Stability**: Track if Option C continues to work as OpenAI updates their API
+2. **Prompt Compression**: If message-based injection ever hits limits, reduce specialized prompts by 40-50% to enable direct merging
+3. **Performance Optimization**: Measure if injecting large prompts as messages has any latency impact
+4. **Hybrid Approach**: For extremely long prompts, combine compression + message injection
 
