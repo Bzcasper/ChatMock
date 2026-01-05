@@ -1,0 +1,90 @@
+# Git files
+.git
+.gitignore
+.gitattributes
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info
+dist
+build
+.venv
+venv
+env
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Documentation and summaries (not needed in production)
+*.md
+!README.md
+!requirements.txt
+
+# Demo and test files
+*demo*.py
+*_demo.py
+agent_debate_demo.py
+agent_image_debate_protocol.py
+app_debate_clean.py
+app_image_debate.py
+app_diy_scene_debate.py
+diy_scene_debate_protocol.py
+diy_scene_generator_protocol.py
+content_gen_cli.py
+content_generation_system.py
+demo.py
+demo_content_generator.py
+demo_mock.py
+optimized_content_generator.py
+real_image_demo.py
+
+# Summary and report files
+*SUMMARY*.md
+*REPORT*.md
+FINAL_*.md
+FINAL_*.txt
+DEPLOYMENT_*.md
+IMPLEMENTATION_*.md
+MODEL_*.md
+PROTOCOL_*.md
+QUICK_*.md
+CONTENT_*.md
+README_*.md
+FLASK_*.md
+SYSTEM_*.md
+
+# Tutorial/guide files (keep in repo, exclude from Docker)
+*_GUIDE.md
+*_USAGE.md
+DIY_*.md
+FLUX_*.md
+WEB_*.md
+
+# Temporary files
+*.part
+*.tmp
+*.log
+repomix-*.txt
+diy_tutorial_curl_command.txt
+
+# UV lock file (not needed at runtime)
+uv.lock
+
+# Test and development
+tests/
+test_*.py
+*_test.py
