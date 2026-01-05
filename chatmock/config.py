@@ -74,6 +74,9 @@ def load_content_type_prompts() -> dict[str, str]:
         'image': 'prompt_image.md',
         'flux-visual': 'prompt_flux_visual.md',
         'visual-prompt': 'prompt_flux_visual.md',
+        'diy-scene': 'prompt_diy_scene_array.md',
+        'scene-array': 'prompt_diy_scene_array.md',
+        'tts-scene': 'prompt_diy_scene_array.md',
     }
 
     prompts = {}
