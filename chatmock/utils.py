@@ -92,7 +92,9 @@ def generate_pkce() -> "PkceCodes":
     return PkceCodes(code_verifier=code_verifier, code_challenge=code_challenge)
 
 
-def convert_chat_messages_to_responses_input(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def convert_chat_messages_to_responses_input(
+    messages: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
     def _normalize_image_data_url(url: str) -> str:
         try:
             if not isinstance(url, str):
@@ -161,7 +163,11 @@ def convert_chat_messages_to_responses_input(messages: List[Dict[str, Any]]) -> 
                 fn = tc.get("function") if isinstance(tc.get("function"), dict) else {}
                 name = fn.get("name") if isinstance(fn, dict) else None
                 args = fn.get("arguments") if isinstance(fn, dict) else None
-                if isinstance(call_id, str) and isinstance(name, str) and isinstance(args, str):
+                if (
+                    isinstance(call_id, str)
+                    and isinstance(name, str)
+                    and isinstance(args, str)
+                ):
                     input_items.append(
                         {
                             "type": "function_call",
@@ -187,7 +193,12 @@ def convert_chat_messages_to_responses_input(messages: List[Dict[str, Any]]) -> 
                     image = part.get("image_url")
                     url = image.get("url") if isinstance(image, dict) else image
                     if isinstance(url, str) and url:
-                        content_items.append({"type": "input_image", "image_url": _normalize_image_data_url(url)})
+                        content_items.append(
+                            {
+                                "type": "input_image",
+                                "image_url": _normalize_image_data_url(url),
+                            }
+                        )
         elif isinstance(content, str) and content:
             kind = "output_text" if role == "assistant" else "input_text"
             content_items.append({"type": kind, "text": content})
@@ -195,7 +206,9 @@ def convert_chat_messages_to_responses_input(messages: List[Dict[str, Any]]) -> 
         if not content_items:
             continue
         role_out = "assistant" if role == "assistant" else "user"
-        input_items.append({"type": "message", "role": role_out, "content": content_items})
+        input_items.append(
+            {"type": "message", "role": role_out, "content": content_items}
+        )
     return input_items
 
 
@@ -228,7 +241,9 @@ def convert_tools_chat_to_responses(tools: Any) -> List[Dict[str, Any]]:
     return out
 
 
-def load_chatgpt_tokens(ensure_fresh: bool = True) -> tuple[str | None, str | None, str | None]:
+def load_chatgpt_tokens(
+    ensure_fresh: bool = True,
+) -> tuple[str | None, str | None, str | None]:
     auth = read_auth_file()
     if not isinstance(auth, dict):
         return None, None, None
@@ -240,18 +255,27 @@ def load_chatgpt_tokens(ensure_fresh: bool = True) -> tuple[str | None, str | No
     refresh_token: Optional[str] = tokens.get("refresh_token")
     last_refresh = auth.get("last_refresh")
 
-    if ensure_fresh and isinstance(refresh_token, str) and refresh_token and CLIENT_ID_DEFAULT:
+    if (
+        ensure_fresh
+        and isinstance(refresh_token, str)
+        and refresh_token
+        and CLIENT_ID_DEFAULT
+    ):
         needs_refresh = _should_refresh_access_token(access_token, last_refresh)
         if needs_refresh or not (isinstance(access_token, str) and access_token):
             with _TOKEN_REFRESH_LOCK:
-                needs_refresh_again = _should_refresh_access_token(access_token, last_refresh)
-                if needs_refresh_again or not (isinstance(access_token, str) and access_token):
+                needs_refresh_again = _should_refresh_access_token(
+                    access_token, last_refresh
+                )
+                if needs_refresh_again or not (
+                    isinstance(access_token, str) and access_token
+                ):
                     timeout = int(os.getenv("CHATGPT_TOKEN_REFRESH_TIMEOUT", "30"))
                     refreshed = _refresh_chatgpt_tokens_with_retry(
                         refresh_token,
                         CLIENT_ID_DEFAULT,
                         max_retries=3,
-                        request_timeout=timeout
+                        request_timeout=timeout,
                     )
                     if refreshed:
                         access_token = refreshed.get("access_token") or access_token
@@ -275,12 +299,16 @@ def load_chatgpt_tokens(ensure_fresh: bool = True) -> tuple[str | None, str | No
                         else:
                             tokens = updated_tokens
                     else:
-                        eprint("WARNING: Token refresh failed; using potentially expired tokens")
+                        eprint(
+                            "WARNING: Token refresh failed; using potentially expired tokens"
+                        )
 
     if not isinstance(account_id, str) or not account_id:
         account_id = _derive_account_id(id_token)
 
-    access_token = access_token if isinstance(access_token, str) and access_token else None
+    access_token = (
+        access_token if isinstance(access_token, str) and access_token else None
+    )
     id_token = id_token if isinstance(id_token, str) and id_token else None
     account_id = account_id if isinstance(account_id, str) and account_id else None
     return access_token, account_id, id_token
@@ -290,7 +318,7 @@ def _refresh_chatgpt_tokens_with_retry(
     refresh_token: str,
     client_id: str,
     max_retries: int = 3,
-    request_timeout: int | None = None
+    request_timeout: int | None = None,
 ) -> Optional[Dict[str, Optional[str]]]:
     timeout = request_timeout or int(os.getenv("CHATGPT_TOKEN_REFRESH_TIMEOUT", "30"))
     last_error: Exception | None = None
@@ -300,7 +328,9 @@ def _refresh_chatgpt_tokens_with_retry(
     for attempt in range(1, max_retries + 1):
         if attempt > 1:
             backoff_seconds = 4 ** (attempt - 2)
-            eprint(f"Token refresh retry attempt {attempt}/{max_retries} after {backoff_seconds}s delay")
+            eprint(
+                f"Token refresh retry attempt {attempt}/{max_retries} after {backoff_seconds}s delay"
+            )
             time.sleep(backoff_seconds)
 
         try:
@@ -312,11 +342,15 @@ def _refresh_chatgpt_tokens_with_retry(
             eprint(f"Token refresh attempt {attempt} failed: {exc}")
 
     # All retries exhausted
-    eprint(f"Token refresh failed after {max_retries} attempts. Last error: {last_error}")
+    eprint(
+        f"Token refresh failed after {max_retries} attempts. Last error: {last_error}"
+    )
     return None
 
 
-def _should_refresh_access_token(access_token: Optional[str], last_refresh: Any) -> bool:
+def _should_refresh_access_token(
+    access_token: Optional[str], last_refresh: Any
+) -> bool:
     if not isinstance(access_token, str) or not access_token:
         return True
 
@@ -338,7 +372,9 @@ def _should_refresh_access_token(access_token: Optional[str], last_refresh: Any)
     return False
 
 
-def _refresh_chatgpt_tokens(refresh_token: str, client_id: str, timeout: int | None = None) -> Optional[Dict[str, Optional[str]]]:
+def _refresh_chatgpt_tokens(
+    refresh_token: str, client_id: str, timeout: int | None = None
+) -> Optional[Dict[str, Optional[str]]]:
     timeout = timeout or int(os.getenv("CHATGPT_TOKEN_REFRESH_TIMEOUT", "30"))
     payload = {
         "grant_type": "refresh_token",
@@ -371,7 +407,11 @@ def _refresh_chatgpt_tokens(refresh_token: str, client_id: str, timeout: int | N
         return None
 
     account_id = _derive_account_id(id_token)
-    new_refresh_token = new_refresh_token if isinstance(new_refresh_token, str) and new_refresh_token else refresh_token
+    new_refresh_token = (
+        new_refresh_token
+        if isinstance(new_refresh_token, str) and new_refresh_token
+        else refresh_token
+    )
     return {
         "id_token": id_token,
         "access_token": access_token,
@@ -380,7 +420,9 @@ def _refresh_chatgpt_tokens(refresh_token: str, client_id: str, timeout: int | N
     }
 
 
-def _persist_refreshed_auth(auth: Dict[str, Any], updated_tokens: Dict[str, Any]) -> Optional[Tuple[Dict[str, Any], Dict[str, Any]]]:
+def _persist_refreshed_auth(
+    auth: Dict[str, Any], updated_tokens: Dict[str, Any]
+) -> Optional[Tuple[Dict[str, Any], Dict[str, Any]]]:
     updated_auth = dict(auth)
     updated_auth["tokens"] = updated_tokens
     updated_auth["last_refresh"] = _now_iso8601()
@@ -394,7 +436,9 @@ def _derive_account_id(id_token: Optional[str]) -> Optional[str]:
     if not isinstance(id_token, str) or not id_token:
         return None
     claims = parse_jwt_claims(id_token) or {}
-    auth_claims = claims.get("https://api.openai.com/auth") if isinstance(claims, dict) else None
+    auth_claims = (
+        claims.get("https://api.openai.com/auth") if isinstance(claims, dict) else None
+    )
     if isinstance(auth_claims, dict):
         account_id = auth_claims.get("chatgpt_account_id")
         if isinstance(account_id, str) and account_id:
@@ -415,10 +459,20 @@ def _parse_iso8601(value: str) -> Optional[datetime.datetime]:
 
 
 def _now_iso8601() -> str:
-    return datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+    return (
+        datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+    )
 
 
 def get_effective_chatgpt_auth() -> tuple[str | None, str | None]:
+    # Check environment variables first (for deployments)
+    env_access_token = os.getenv("CHATGPT_ACCESS_TOKEN")
+    env_account_id = os.getenv("CHATGPT_ACCOUNT_ID")
+
+    if env_access_token and env_account_id:
+        return env_access_token, env_account_id
+
+    # Fall back to auth file
     access_token, account_id, id_token = load_chatgpt_tokens()
     if not account_id:
         account_id = _derive_account_id(id_token)
@@ -447,7 +501,7 @@ def sse_translate_chat(
     ws_state: dict[str, Any] = {}
     ws_index: dict[str, int] = {}
     ws_next_index: int = 0
-    
+
     def _serialize_tool_args(eff_args: Any) -> str:
         """
         Serialize tool call arguments with proper JSON handling.
@@ -475,7 +529,7 @@ def sse_translate_chat(
         except (TypeError, ValueError) as e:
             logger.warning(f"Failed to serialize tool args: {e}; using empty object")
             return "{}"
-    
+
     def _extract_usage(evt: Dict[str, Any]) -> Dict[str, int] | None:
         try:
             usage = (evt.get("response") or {}).get("usage")
@@ -487,6 +541,7 @@ def sse_translate_chat(
             return {"prompt_tokens": pt, "completion_tokens": ct, "total_tokens": tt}
         except Exception:
             return None
+
     try:
         try:
             line_iterator = upstream.iter_lines(decode_unicode=False)
@@ -529,7 +584,9 @@ def sse_translate_chat(
                 yield b"data: [DONE]\n\n"
                 return
             kind = evt.get("type")
-            if isinstance(evt.get("response"), dict) and isinstance(evt["response"].get("id"), str):
+            if isinstance(evt.get("response"), dict) and isinstance(
+                evt["response"].get("id"), str
+            ):
                 response_id = evt["response"].get("id") or response_id
 
             if isinstance(kind, str) and ("web_search_call" in kind):
@@ -537,25 +594,44 @@ def sse_translate_chat(
                     call_id = evt.get("item_id") or "ws_call"
                     if verbose and vlog:
                         try:
-                            vlog(f"CM_TOOLS {kind} id={call_id} -> tool_calls(web_search)")
+                            vlog(
+                                f"CM_TOOLS {kind} id={call_id} -> tool_calls(web_search)"
+                            )
                         except Exception as e:
                             logger.debug(f"Failed to log verbose output: {e}")
-                    item = evt.get('item') if isinstance(evt.get('item'), dict) else {}
-                    params_dict = ws_state.setdefault(call_id, {}) if isinstance(ws_state.get(call_id), dict) else {}
+                    item = evt.get("item") if isinstance(evt.get("item"), dict) else {}
+                    params_dict = (
+                        ws_state.setdefault(call_id, {})
+                        if isinstance(ws_state.get(call_id), dict)
+                        else {}
+                    )
+
                     def _merge_from(src):
                         if not isinstance(src, dict):
                             return
-                        for whole in ('parameters','args','arguments','input'):
+                        for whole in ("parameters", "args", "arguments", "input"):
                             if isinstance(src.get(whole), dict):
                                 params_dict.update(src.get(whole))
-                        if isinstance(src.get('query'), str): params_dict.setdefault('query', src.get('query'))
-                        if isinstance(src.get('q'), str): params_dict.setdefault('query', src.get('q'))
-                        for rk in ('recency','time_range','days'):
-                            if src.get(rk) is not None and rk not in params_dict: params_dict[rk] = src.get(rk)
-                        for dk in ('domains','include_domains','include'):
-                            if isinstance(src.get(dk), list) and 'domains' not in params_dict: params_dict['domains'] = src.get(dk)
-                        for mk in ('max_results','topn','limit'):
-                            if src.get(mk) is not None and 'max_results' not in params_dict: params_dict['max_results'] = src.get(mk)
+                        if isinstance(src.get("query"), str):
+                            params_dict.setdefault("query", src.get("query"))
+                        if isinstance(src.get("q"), str):
+                            params_dict.setdefault("query", src.get("q"))
+                        for rk in ("recency", "time_range", "days"):
+                            if src.get(rk) is not None and rk not in params_dict:
+                                params_dict[rk] = src.get(rk)
+                        for dk in ("domains", "include_domains", "include"):
+                            if (
+                                isinstance(src.get(dk), list)
+                                and "domains" not in params_dict
+                            ):
+                                params_dict["domains"] = src.get(dk)
+                        for mk in ("max_results", "topn", "limit"):
+                            if (
+                                src.get(mk) is not None
+                                and "max_results" not in params_dict
+                            ):
+                                params_dict["max_results"] = src.get(mk)
+
                     _merge_from(item)
                     _merge_from(evt if isinstance(evt, dict) else None)
                     params = params_dict if params_dict else None
@@ -564,7 +640,9 @@ def sse_translate_chat(
                             ws_state.setdefault(call_id, {}).update(params)
                         except Exception:
                             pass
-                    eff_params = ws_state.get(call_id, params if isinstance(params, (dict, list, str)) else {})
+                    eff_params = ws_state.get(
+                        call_id, params if isinstance(params, (dict, list, str)) else {}
+                    )
                     args_str = _serialize_tool_args(eff_params)
                     if call_id not in ws_index:
                         ws_index[call_id] = ws_next_index
@@ -584,7 +662,10 @@ def sse_translate_chat(
                                             "index": _idx,
                                             "id": call_id,
                                             "type": "function",
-                                            "function": {"name": "web_search", "arguments": args_str},
+                                            "function": {
+                                                "name": "web_search",
+                                                "arguments": args_str,
+                                            },
                                         }
                                     ]
                                 },
@@ -615,7 +696,13 @@ def sse_translate_chat(
                         "object": "chat.completion.chunk",
                         "created": created,
                         "model": model,
-                        "choices": [{"index": 0, "delta": {"content": "</think>"}, "finish_reason": None}],
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {"content": "</think>"},
+                                "finish_reason": None,
+                            }
+                        ],
                     }
                     yield f"data: {json.dumps(close_chunk)}\n\n".encode("utf-8")
                     think_open = False
@@ -626,35 +713,51 @@ def sse_translate_chat(
                     "object": "chat.completion.chunk",
                     "created": created,
                     "model": model,
-                    "choices": [{"index": 0, "delta": {"content": delta}, "finish_reason": None}],
+                    "choices": [
+                        {"index": 0, "delta": {"content": delta}, "finish_reason": None}
+                    ],
                 }
                 yield f"data: {json.dumps(chunk)}\n\n".encode("utf-8")
             elif kind == "response.output_item.done":
                 item = evt.get("item") or {}
-                if isinstance(item, dict) and (item.get("type") == "function_call" or item.get("type") == "web_search_call"):
+                if isinstance(item, dict) and (
+                    item.get("type") == "function_call"
+                    or item.get("type") == "web_search_call"
+                ):
                     call_id = item.get("call_id") or item.get("id") or ""
-                    name = item.get("name") or ("web_search" if item.get("type") == "web_search_call" else "")
+                    name = item.get("name") or (
+                        "web_search" if item.get("type") == "web_search_call" else ""
+                    )
                     raw_args = item.get("arguments") or item.get("parameters")
                     if isinstance(raw_args, dict):
                         try:
                             ws_state.setdefault(call_id, {}).update(raw_args)
                         except Exception:
                             pass
-                    eff_args = ws_state.get(call_id, raw_args if isinstance(raw_args, (dict, list, str)) else {})
+                    eff_args = ws_state.get(
+                        call_id,
+                        raw_args if isinstance(raw_args, (dict, list, str)) else {},
+                    )
                     try:
                         args = _serialize_tool_args(eff_args)
                     except Exception:
                         args = "{}"
                     if item.get("type") == "web_search_call" and verbose and vlog:
                         try:
-                            vlog(f"CM_TOOLS response.output_item.done web_search_call id={call_id} has_args={bool(args)}")
+                            vlog(
+                                f"CM_TOOLS response.output_item.done web_search_call id={call_id} has_args={bool(args)}"
+                            )
                         except Exception:
                             pass
                     if call_id not in ws_index:
                         ws_index[call_id] = ws_next_index
                         ws_next_index += 1
                     _idx = ws_index.get(call_id, 0)
-                    if isinstance(call_id, str) and isinstance(name, str) and isinstance(args, str):
+                    if (
+                        isinstance(call_id, str)
+                        and isinstance(name, str)
+                        and isinstance(args, str)
+                    ):
                         delta_chunk = {
                             "id": response_id,
                             "object": "chat.completion.chunk",
@@ -669,7 +772,10 @@ def sse_translate_chat(
                                                 "index": _idx,
                                                 "id": call_id,
                                                 "type": "function",
-                                                "function": {"name": name, "arguments": args},
+                                                "function": {
+                                                    "name": name,
+                                                    "arguments": args,
+                                                },
                                             }
                                         ]
                                     },
@@ -684,7 +790,9 @@ def sse_translate_chat(
                             "object": "chat.completion.chunk",
                             "created": created,
                             "model": model,
-                            "choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}],
+                            "choices": [
+                                {"index": 0, "delta": {}, "finish_reason": "tool_calls"}
+                            ],
                         }
                         yield f"data: {json.dumps(finish_chunk)}\n\n".encode("utf-8")
             elif kind == "response.reasoning_summary_part.added":
@@ -693,10 +801,16 @@ def sse_translate_chat(
                         pending_summary_paragraph = True
                     else:
                         saw_any_summary = True
-            elif kind in ("response.reasoning_summary_text.delta", "response.reasoning_text.delta"):
+            elif kind in (
+                "response.reasoning_summary_text.delta",
+                "response.reasoning_text.delta",
+            ):
                 delta_txt = evt.get("delta") or ""
                 if compat == "o3":
-                    if kind == "response.reasoning_summary_text.delta" and pending_summary_paragraph:
+                    if (
+                        kind == "response.reasoning_summary_text.delta"
+                        and pending_summary_paragraph
+                    ):
                         nl_chunk = {
                             "id": response_id,
                             "object": "chat.completion.chunk",
@@ -705,7 +819,11 @@ def sse_translate_chat(
                             "choices": [
                                 {
                                     "index": 0,
-                                    "delta": {"reasoning": {"content": [{"type": "text", "text": "\n"}]}},
+                                    "delta": {
+                                        "reasoning": {
+                                            "content": [{"type": "text", "text": "\n"}]
+                                        }
+                                    },
                                     "finish_reason": None,
                                 }
                             ],
@@ -720,7 +838,11 @@ def sse_translate_chat(
                         "choices": [
                             {
                                 "index": 0,
-                                "delta": {"reasoning": {"content": [{"type": "text", "text": delta_txt}]}},
+                                "delta": {
+                                    "reasoning": {
+                                        "content": [{"type": "text", "text": delta_txt}]
+                                    }
+                                },
                                 "finish_reason": None,
                             }
                         ],
@@ -733,18 +855,33 @@ def sse_translate_chat(
                             "object": "chat.completion.chunk",
                             "created": created,
                             "model": model,
-                            "choices": [{"index": 0, "delta": {"content": "<think>"}, "finish_reason": None}],
+                            "choices": [
+                                {
+                                    "index": 0,
+                                    "delta": {"content": "<think>"},
+                                    "finish_reason": None,
+                                }
+                            ],
                         }
                         yield f"data: {json.dumps(open_chunk)}\n\n".encode("utf-8")
                         think_open = True
                     if think_open and not think_closed:
-                        if kind == "response.reasoning_summary_text.delta" and pending_summary_paragraph:
+                        if (
+                            kind == "response.reasoning_summary_text.delta"
+                            and pending_summary_paragraph
+                        ):
                             nl_chunk = {
                                 "id": response_id,
                                 "object": "chat.completion.chunk",
                                 "created": created,
                                 "model": model,
-                                "choices": [{"index": 0, "delta": {"content": "\n"}, "finish_reason": None}],
+                                "choices": [
+                                    {
+                                        "index": 0,
+                                        "delta": {"content": "\n"},
+                                        "finish_reason": None,
+                                    }
+                                ],
                             }
                             yield f"data: {json.dumps(nl_chunk)}\n\n".encode("utf-8")
                             pending_summary_paragraph = False
@@ -753,7 +890,13 @@ def sse_translate_chat(
                             "object": "chat.completion.chunk",
                             "created": created,
                             "model": model,
-                            "choices": [{"index": 0, "delta": {"content": delta_txt}, "finish_reason": None}],
+                            "choices": [
+                                {
+                                    "index": 0,
+                                    "delta": {"content": delta_txt},
+                                    "finish_reason": None,
+                                }
+                            ],
                         }
                         yield f"data: {json.dumps(content_chunk)}\n\n".encode("utf-8")
                 else:
@@ -766,7 +909,10 @@ def sse_translate_chat(
                             "choices": [
                                 {
                                     "index": 0,
-                                    "delta": {"reasoning_summary": delta_txt, "reasoning": delta_txt},
+                                    "delta": {
+                                        "reasoning_summary": delta_txt,
+                                        "reasoning": delta_txt,
+                                    },
                                     "finish_reason": None,
                                 }
                             ],
@@ -779,7 +925,11 @@ def sse_translate_chat(
                             "created": created,
                             "model": model,
                             "choices": [
-                                {"index": 0, "delta": {"reasoning": delta_txt}, "finish_reason": None}
+                                {
+                                    "index": 0,
+                                    "delta": {"reasoning": delta_txt},
+                                    "finish_reason": None,
+                                }
                             ],
                         }
                         yield f"data: {json.dumps(chunk)}\n\n".encode("utf-8")
@@ -796,7 +946,11 @@ def sse_translate_chat(
                 yield f"data: {json.dumps(chunk)}\n\n".encode("utf-8")
                 sent_stop_chunk = True
             elif kind == "response.failed":
-                err = evt.get("response", {}).get("error", {}).get("message", "response.failed")
+                err = (
+                    evt.get("response", {})
+                    .get("error", {})
+                    .get("message", "response.failed")
+                )
                 chunk = {"error": {"message": err}}
                 yield f"data: {json.dumps(chunk)}\n\n".encode("utf-8")
             elif kind == "response.completed":
@@ -809,7 +963,13 @@ def sse_translate_chat(
                         "object": "chat.completion.chunk",
                         "created": created,
                         "model": model,
-                        "choices": [{"index": 0, "delta": {"content": "</think>"}, "finish_reason": None}],
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {"content": "</think>"},
+                                "finish_reason": None,
+                            }
+                        ],
                     }
                     yield f"data: {json.dumps(close_chunk)}\n\n".encode("utf-8")
                     think_open = False
@@ -832,7 +992,9 @@ def sse_translate_chat(
                             "object": "chat.completion.chunk",
                             "created": created,
                             "model": model,
-                            "choices": [{"index": 0, "delta": {}, "finish_reason": None}],
+                            "choices": [
+                                {"index": 0, "delta": {}, "finish_reason": None}
+                            ],
                             "usage": upstream_usage,
                         }
                         yield f"data: {json.dumps(usage_chunk)}\n\n".encode("utf-8")
@@ -844,10 +1006,18 @@ def sse_translate_chat(
         upstream.close()
 
 
-def sse_translate_text(upstream, model: str, created: int, verbose: bool = False, vlog=None, *, include_usage: bool = False):
+def sse_translate_text(
+    upstream,
+    model: str,
+    created: int,
+    verbose: bool = False,
+    vlog=None,
+    *,
+    include_usage: bool = False,
+):
     response_id = "cmpl-stream"
     upstream_usage = None
-    
+
     def _extract_usage(evt: Dict[str, Any]) -> Dict[str, int] | None:
         try:
             usage = (evt.get("response") or {}).get("usage")
@@ -859,16 +1029,21 @@ def sse_translate_text(upstream, model: str, created: int, verbose: bool = False
             return {"prompt_tokens": pt, "completion_tokens": ct, "total_tokens": tt}
         except Exception:
             return None
+
     try:
         for raw_line in upstream.iter_lines(decode_unicode=False):
             if not raw_line:
                 continue
-            line = raw_line.decode("utf-8", errors="ignore") if isinstance(raw_line, (bytes, bytearray)) else raw_line
+            line = (
+                raw_line.decode("utf-8", errors="ignore")
+                if isinstance(raw_line, (bytes, bytearray))
+                else raw_line
+            )
             if verbose and vlog:
                 vlog(line)
             if not line.startswith("data: "):
                 continue
-            data = line[len("data: "):].strip()
+            data = line[len("data: ") :].strip()
             if not data or data == "[DONE]":
                 if data == "[DONE]":
                     chunk = {
@@ -885,7 +1060,9 @@ def sse_translate_text(upstream, model: str, created: int, verbose: bool = False
             except Exception:
                 continue
             kind = evt.get("type")
-            if isinstance(evt.get("response"), dict) and isinstance(evt["response"].get("id"), str):
+            if isinstance(evt.get("response"), dict) and isinstance(
+                evt["response"].get("id"), str
+            ):
                 response_id = evt["response"].get("id") or response_id
             if kind == "response.output_text.delta":
                 delta_text = evt.get("delta") or ""
@@ -894,7 +1071,9 @@ def sse_translate_text(upstream, model: str, created: int, verbose: bool = False
                     "object": "text_completion.chunk",
                     "created": created,
                     "model": model,
-                    "choices": [{"index": 0, "text": delta_text, "finish_reason": None}],
+                    "choices": [
+                        {"index": 0, "text": delta_text, "finish_reason": None}
+                    ],
                 }
                 yield f"data: {json.dumps(chunk)}\n\n".encode("utf-8")
             elif kind == "response.output_text.done":
@@ -917,7 +1096,9 @@ def sse_translate_text(upstream, model: str, created: int, verbose: bool = False
                             "object": "text_completion.chunk",
                             "created": created,
                             "model": model,
-                            "choices": [{"index": 0, "text": "", "finish_reason": None}],
+                            "choices": [
+                                {"index": 0, "text": "", "finish_reason": None}
+                            ],
                             "usage": upstream_usage,
                         }
                         yield f"data: {json.dumps(usage_chunk)}\n\n".encode("utf-8")
