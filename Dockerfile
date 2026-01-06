@@ -1,23 +1,31 @@
+# Simple Dockerfile for chatmock-prod
 FROM python:3.13-slim
-
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    CHATGPT_LOCAL_HOME=/app/data
 
 WORKDIR /app
 
-COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+# Install system dependencies
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
 
-COPY . /app
+# Copy the chatmock package and required files
+COPY chatmock ./chatmock
+COPY pyproject.toml ./
 
+# Install Python dependencies
+RUN pip install --no-cache-dir flask requests
+
+# Set environment
+ENV PYTHONUNBUFFERED=1
+ENV CHATGPT_LOCAL_HOME=/app/data
+
+# Create data directory
 RUN mkdir -p /app/data
 
-COPY docker/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+# Expose port
+EXPOSE 8080
 
-EXPOSE 8000
+# Health check
+HEALTHCHECK --interval=10s --timeout=5s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
 
-ENTRYPOINT ["python", "-m", "chatmock"]
-CMD ["serve"]
-
+# Run
+CMD ["python", "-m", "chatmock", "serve", "--host", "0.0.0.0", "--port", "8080"]
